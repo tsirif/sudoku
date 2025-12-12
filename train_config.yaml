@@ -1,0 +1,63 @@
+# Configuration for Sudoku Diffusion Language Model Training
+
+# Data
+data_dir: "./data"
+output_dir: "./checkpoints"
+
+# Model Architecture (~37M parameters)
+model:
+  vocab_size: 10  # 0: MASK/empty, 1-9: digits (no EOL)
+  seq_length: 81  # 81 cells (9×9 grid, no EOL tokens)
+  hidden_dim: 512
+  num_layers: 12
+  num_heads: 8
+  mlp_ratio: 4
+  dropout: 0.1
+
+# Training
+training:
+  batch_size: 128
+  num_steps: 100000  # ~530 epochs with 48k training samples
+  learning_rate: 1e-4
+  weight_decay: 0.01
+  grad_clip: 1.0
+  
+  # Dynamic masking
+  mask_ratio_min: 0.2
+  mask_ratio_max: 0.9
+  
+  # Optimizer
+  optimizer: "AdamW"
+  beta1: 0.9
+  beta2: 0.999
+  
+  # Scheduler
+  scheduler: "cosine"
+  warmup_steps: 0
+  min_lr_ratio: 0.1
+
+# System
+system:
+  seed: 42
+  num_workers: 4
+  device: "cuda"
+
+# Logging
+logging:
+  log_interval: 100
+  eval_interval: 1000
+  save_interval: 10000
+  use_wandb: true
+  wandb_project: "sudoku-diffusion-lm"
+  wandb_run_name: null  # Auto-generated if null
+
+# Dataset
+dataset:
+  train_size: 48000
+  test_size: 2000
+  difficulties: ["easy", "medium", "hard"]
+  clue_counts:
+    easy: 40
+    medium: 35
+    hard: 30
+

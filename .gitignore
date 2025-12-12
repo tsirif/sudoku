@@ -1,0 +1,16 @@
+venv/
+data/
+checkpoints/
+wandb/
+checkpoints_absorbing/
+uniform_absorbing_mixture_checkpoints/
+absorbing_checkpoints/
+analysis_results/absorbing_checkpoints/
+eval/analysis/absorbing_checkpoints/
+eval/analysis/custom_checkpoints/
+eval/analysis/uniform_absorbing_mixture_checkpoints/
+uniform_absorbing_mixture_with_clean_checkpoints
+eval/analysis_new
+eval_results_all_nov22/
+analysis_results_all_nov22/
+compare_results_all
