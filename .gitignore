@@ -14,3 +14,4 @@ eval/analysis_new
 eval_results_all_nov22/
 analysis_results_all_nov22/
 compare_results_all
+__pycache__/

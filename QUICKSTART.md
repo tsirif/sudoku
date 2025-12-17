@@ -28,10 +28,12 @@ python test_model.py
 ```bash
 # 生成 48k 训练 + 2k 测试样本 (~20-30分钟)
 python generate_data.py \
-    --train-size 48000 \
-    --test-size 2000 \
+    --train-size 1000000 \
+    --test-size 423000 \
     --output-dir ./data
 ```
+
+
 
 **输出**: 
 - `data/train_puzzles.npy` (48k 样本)

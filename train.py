@@ -22,32 +22,129 @@ except ImportError:
     WANDB_AVAILABLE = False
     print("Warning: wandb not installed. Install with: pip install wandb")
 
+try:
+    from datasets import load_from_disk
+    DATASETS_AVAILABLE = True
+except ImportError:
+    DATASETS_AVAILABLE = False
+    print("Warning: datasets not installed. HuggingFace format not available.")
+
 from model import create_sudoku_dit
 
 
 class SudokuDataset(Dataset):
-    """Dataset for Sudoku puzzles and solutions."""
+    """Dataset for Sudoku puzzles and solutions. Supports both .npy and HuggingFace formats."""
     
-    def __init__(self, data_dir, split='train'):
-        self.data_dir = Path(data_dir)
+    def __init__(self, data_dir, split='train', format='auto'):
+        """
+        Initialize dataset.
         
-        # Load data
-        self.solutions = np.load(self.data_dir / f'{split}_solutions.npy')
+        Args:
+            data_dir: Path to data directory
+            split: 'train' or 'test'
+            format: 'npy', 'huggingface', or 'auto' (auto-detect)
+        """
+        self.data_dir = Path(data_dir)
+        self.split = split
+        self.mask_id = 0  # MASK token (0 = empty cell in sudoku)
+        
+        # Auto-detect format if requested
+        if format == 'auto':
+            format = self._detect_format()
+        
+        self.format = format
+        
+        # Load data based on format
+        if format == 'npy':
+            self._load_npy()
+        elif format == 'huggingface':
+            self._load_huggingface()
+        else:
+            raise ValueError(f"Unknown format: {format}")
+        
+        print(f"Loaded {len(self)} {split} samples (format: {format})")
+    
+    def _detect_format(self):
+        """Auto-detect dataset format."""
+        # Check for .npy files
+        if (self.data_dir / f'{self.split}_solutions.npy').exists():
+            return 'npy'
+        # Check for HuggingFace dataset
+        elif (self.data_dir / self.split).exists() or (self.data_dir / 'dataset_dict.json').exists():
+            if not DATASETS_AVAILABLE:
+                raise ImportError("datasets library not installed. Install with: pip install datasets")
+            return 'huggingface'
+        else:
+            raise ValueError(f"Could not detect format in {self.data_dir}")
+    
+    def _load_npy(self):
+        """Load from numpy arrays."""
+        self.solutions = np.load(self.data_dir / f'{self.split}_solutions.npy')
+        
+        # Load puzzles if available (for future use)
+        puzzle_path = self.data_dir / f'{self.split}_puzzles.npy'
+        if puzzle_path.exists():
+            self.puzzles = np.load(puzzle_path)
+        else:
+            self.puzzles = None
         
         # Load metadata
-        with open(self.data_dir / f'{split}_metadata.json') as f:
-            self.metadata = json.load(f)
+        metadata_path = self.data_dir / f'{self.split}_metadata.json'
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                self.metadata = json.load(f)
+        else:
+            self.metadata = {}
+    
+    def _load_huggingface(self):
+        """Load from HuggingFace dataset."""
+        if not DATASETS_AVAILABLE:
+            raise ImportError("datasets library not installed. Install with: pip install datasets")
         
-        self.mask_id = 0  # MASK token (0 = empty cell in sudoku)
-        print(f"Loaded {len(self.solutions)} {split} samples")
+        # Try loading from split subdirectory first
+        split_dir = self.data_dir / self.split
+        if split_dir.exists():
+            self.hf_dataset = load_from_disk(str(split_dir))
+        else:
+            # Try loading entire DatasetDict and extract split
+            from datasets import DatasetDict
+            dataset_dict = DatasetDict.load_from_disk(str(self.data_dir))
+            self.hf_dataset = dataset_dict[self.split]
+        
+        self.metadata = {
+            'num_samples': len(self.hf_dataset),
+            'format': 'huggingface',
+        }
     
     def __len__(self):
-        return len(self.solutions)
+        if self.format == 'npy':
+            return len(self.solutions)
+        else:  # huggingface
+            return len(self.hf_dataset)
     
     def __getitem__(self, idx):
-        # Only use solutions for training (diffusion learns to denoise)
-        solution = torch.from_numpy(self.solutions[idx]).long()
-        return {'solution': solution}
+        if self.format == 'npy':
+            # Only use solutions for training (diffusion learns to denoise)
+            solution = torch.from_numpy(self.solutions[idx]).long()
+            
+            # Optionally include puzzle (for future use)
+            if self.puzzles is not None:
+                puzzle = torch.from_numpy(self.puzzles[idx]).long()
+                return {'solution': solution, 'puzzle': puzzle}
+            else:
+                return {'solution': solution}
+        else:  # huggingface
+            sample = self.hf_dataset[idx]
+            solution = torch.from_numpy(np.array(sample['solution'], dtype=np.int64)).long()
+            puzzle = torch.from_numpy(np.array(sample['puzzle'], dtype=np.int64)).long()
+            
+            return {
+                'solution': solution,
+                'puzzle': puzzle,
+                # Include metadata for potential filtering/analysis
+                'group_index': sample['group_index'],
+                'is_augmented': sample['is_augmented'],
+            }
 
 
 def add_absorbing_noise(tokens, mask_id, mask_ratio_min=0.2, mask_ratio_max=0.9):
@@ -319,8 +416,8 @@ def train(args):
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Create datasets
-    train_dataset = SudokuDataset(args.data_dir, split='train')
-    test_dataset = SudokuDataset(args.data_dir, split='test')
+    train_dataset = SudokuDataset(args.data_dir, split='train', format=args.data_format)
+    test_dataset = SudokuDataset(args.data_dir, split='test', format=args.data_format)
     mask_id = train_dataset.mask_id
     
     # Setup wandb
@@ -664,6 +761,8 @@ def main():
     # Data
     parser.add_argument('--data-dir', type=str, default='./data', help='Data directory')
     parser.add_argument('--output-dir', type=str, default=None, help='Output directory (default: <loss_mode>_checkpoints)')
+    parser.add_argument('--data-format', type=str, default='auto', choices=['auto', 'npy', 'huggingface'], 
+                        help='Data format (auto-detect, npy arrays, or huggingface dataset)')
     
     # Model (default: 28.6M params)
     # These are defined in model.py, but can be overridden
